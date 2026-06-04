@@ -66,6 +66,25 @@
             font-size: 16px;
             letter-spacing: 2px;
         }
+        /* 일시정지 조작 버튼 전용 레이아웃 */
+        #pause-trigger-btn {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.6);
+            border: 2px solid #fff;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 6px 12px;
+            cursor: pointer;
+            z-index: 6;
+            box-shadow: 1px 1px 0px #000;
+        }
+        #pause-trigger-btn:active {
+            background-color: rgba(255, 255, 255, 0.3);
+        }
         /* 오버레이 공통 */
         .overlay {
             position: absolute;
@@ -98,6 +117,36 @@
             text-align: center;
             line-height: 1.6;
             max-width: 80%;
+        }
+        /* 볼륨 컨테이너 디자인 */
+        .volume-control-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+            margin-bottom: 25px;
+            background-color: rgba(255, 255, 255, 0.08);
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: 1px dashed rgba(255, 255, 255, 0.2);
+            width: 280px;
+        }
+        .volume-control-container label {
+            font-size: 12px;
+            font-weight: bold;
+            color: #ffcc00;
+        }
+        .volume-control-container input[type="range"] {
+            cursor: pointer;
+            outline: none;
+            width: 120px;
+        }
+        .volume-val {
+            font-size: 12px;
+            font-family: monospace;
+            width: 35px;
+            text-align: right;
         }
         .btn {
             background-color: #e91e63;
@@ -269,6 +318,9 @@
             </div>
         </div>
 
+        <!-- 일시정지 조작용 보조 버튼 (키보드 P 대용) -->
+        <button id="pause-trigger-btn" class="hidden" onclick="togglePauseByButton()">⏸️ 일시 정지 (P)</button>
+
         <!-- 캔버스 -->
         <canvas id="gameCanvas" width="800" height="480"></canvas>
 
@@ -283,6 +335,11 @@
                 매 스테이지 사망/추락 시 <span style="color:#ff1744; font-weight:bold;">현재 스테이지 x 2배의 코인</span>이 몰수당합니다.<br>
                 사운드를 원활히 즐기려면 하단 버튼을 클릭해 게임을 시작해 주세요!
             </p>
+            <div class="volume-control-container">
+                <label for="start-vol-range">🔈 전체 마스터 음량:</label>
+                <input type="range" id="start-vol-range" min="0" max="100" value="70" oninput="changeMasterVolume(this.value)">
+                <span id="start-vol-val" class="volume-val">70%</span>
+            </div>
             <button class="btn" style="background-color: #ff9100; box-shadow: 0 4px 0 #ff6d00;" onclick="startGame()">소리 켜고 대모험 시작</button>
         </div>
 
@@ -323,6 +380,21 @@
             <button class="btn" style="background-color: #2979ff; box-shadow: 0 4px 0 #1565c0;" onclick="exitShop()">다음 시련의 전장으로</button>
         </div>
 
+        <!-- [일시정지 오버레이] -->
+        <div id="pause-overlay" class="overlay hidden">
+            <h1 style="color: #2979ff; text-shadow: 2px 2px 0px #000;">⏸️ 잠시 멈춤</h1>
+            <p>용사여, 숨을 고르고 준비되었을 때 계속 모험하세요.</p>
+            
+            <div class="volume-control-container">
+                <label for="pause-vol-range">🔈 실시간 음량:</label>
+                <input type="range" id="pause-vol-range" min="0" max="100" value="70" oninput="changeMasterVolume(this.value)">
+                <span id="pause-vol-val" class="volume-val">70%</span>
+            </div>
+
+            <button class="btn" style="background-color: #2979ff; box-shadow: 0 4px 0 #1565c0; width: 180px;" onclick="resumeGame()">계속 모험하기</button>
+            <button class="btn" style="background-color: #4b5563; box-shadow: 0 4px 0 #1f2937; width: 180px;" onclick="fullResetGame()">포기하고 타이틀로</button>
+        </div>
+
         <!-- [사망 오버레이] -->
         <div id="gameover-overlay" class="overlay hidden">
             <h1 style="color: #ff1744; font-size: 38px; font-family: 'Courier New', monospace;">* 도전 실패</h1>
@@ -360,7 +432,8 @@
     <div id="instructions">
         이동: <kbd>A</kbd>, <kbd>D</kbd> / <kbd>←</kbd>, <kbd>→</kbd> &nbsp;|&nbsp; 
         점프: <kbd>Space</kbd> / <kbd>W</kbd> / <kbd>↑</kbd> &nbsp;|&nbsp; 
-        발사: <kbd>Shift</kbd> / <kbd>Z</kbd><br>
+        발사: <kbd>Shift</kbd> / <kbd>Z</kbd> &nbsp;|&nbsp;
+        <strong>일시정지: <kbd>P</kbd> 키</strong><br>
         <strong>히든 조건:</strong> 10스테이지 마왕을 격치할 때 코인을 최소 <strong>50개 이상</strong> 반드시 유지하고 있어야 합니다!
     </div>
 
@@ -374,6 +447,9 @@
         let audioCtx = null;
         let currentBgmNode = null;
         let bgmIntervalId = null;
+        
+        // 🔊 볼륨 관리용 글로벌 배율 인자 (0.0 ~ 1.0)
+        let soundVolumeScale = 0.7;
 
         function initAudio() {
             if (!audioCtx) {
@@ -381,9 +457,19 @@
             }
         }
 
+        // 실시간 음량 마스터 제어기 함수
+        function changeMasterVolume(value) {
+            soundVolumeScale = parseInt(value) / 100;
+            // 인게임 모든 슬라이더 싱크 정렬
+            document.getElementById('start-vol-range').value = value;
+            document.getElementById('start-vol-val').innerText = value + '%';
+            document.getElementById('pause-vol-range').value = value;
+            document.getElementById('pause-vol-val').innerText = value + '%';
+        }
+
         // 효과음 재생용 신디사이저 함수
         function playSound(type) {
-            if (!audioCtx) return;
+            if (!audioCtx || soundVolumeScale <= 0) return;
             try {
                 let osc = audioCtx.createOscillator();
                 let gain = audioCtx.createGain();
@@ -397,7 +483,7 @@
                     osc.type = 'triangle';
                     osc.frequency.setValueAtTime(150, now);
                     osc.frequency.exponentialRampToValueAtTime(600, now + 0.15);
-                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.setValueAtTime(0.2 * soundVolumeScale, now);
                     gain.gain.linearRampToValueAtTime(0, now + 0.15);
                     osc.start(now);
                     osc.stop(now + 0.16);
@@ -407,7 +493,7 @@
                     osc.type = 'square';
                     osc.frequency.setValueAtTime(987.77, now); // B5
                     osc.frequency.setValueAtTime(1318.51, now + 0.08); // E6
-                    gain.gain.setValueAtTime(0.15, now);
+                    gain.gain.setValueAtTime(0.15 * soundVolumeScale, now);
                     gain.gain.linearRampToValueAtTime(0, now + 0.25);
                     osc.start(now);
                     osc.stop(now + 0.26);
@@ -417,7 +503,7 @@
                     osc.type = 'sawtooth';
                     osc.frequency.setValueAtTime(180, now);
                     osc.frequency.linearRampToValueAtTime(40, now + 0.2);
-                    gain.gain.setValueAtTime(0.4, now);
+                    gain.gain.setValueAtTime(0.4 * soundVolumeScale, now);
                     gain.gain.linearRampToValueAtTime(0, now + 0.2);
                     osc.start(now);
                     osc.stop(now + 0.21);
@@ -427,7 +513,7 @@
                     osc.type = 'sine';
                     osc.frequency.setValueAtTime(523.25, now); // C5
                     osc.frequency.exponentialRampToValueAtTime(1046.50, now + 0.3); // C6
-                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.setValueAtTime(0.2 * soundVolumeScale, now);
                     gain.gain.linearRampToValueAtTime(0, now + 0.3);
                     osc.start(now);
                     osc.stop(now + 0.31);
@@ -437,7 +523,7 @@
                     osc.type = 'sawtooth';
                     osc.frequency.setValueAtTime(800, now);
                     osc.frequency.linearRampToValueAtTime(200, now + 0.08);
-                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.setValueAtTime(0.1 * soundVolumeScale, now);
                     gain.gain.linearRampToValueAtTime(0, now + 0.08);
                     osc.start(now);
                     osc.stop(now + 0.09);
@@ -451,10 +537,9 @@
             stopBGM();
 
             let notes = [];
-            let speed = 200; // 밀리초 단위 한박자
+            let speed = 200; // BGM 박자 템포
 
             if (theme === 'normal') {
-                // 밝고 영웅적인 초원 음악
                 notes = [
                     261.63, 293.66, 329.63, 349.23, 392.00, 392.00, 440.00, 392.00,
                     349.23, 329.63, 261.63, 293.66, 329.63, 329.63, 293.66, 293.66
@@ -462,7 +547,6 @@
                 speed = 220;
             } 
             else if (theme === 'cave') {
-                // 다소 느리고 신비로운 동굴 감성
                 notes = [
                     196.00, 0, 220.00, 0, 246.94, 0, 293.66, 246.94,
                     220.00, 0, 196.00, 0, 146.83, 164.81, 196.00, 0
@@ -470,7 +554,6 @@
                 speed = 250;
             } 
             else if (theme === 'castle') {
-                // 웅장하고 비장한 성 전용 곡
                 notes = [
                     220.00, 220.00, 440.00, 392.00, 329.63, 293.66, 329.63, 0,
                     220.00, 220.00, 440.00, 392.00, 493.88, 523.25, 493.88, 0
@@ -478,7 +561,6 @@
                 speed = 180;
             }
             else if (theme === 'hidden') {
-                // 울부짖는 하이스피드 보스전 및 얼티밋 컵 전용 질주곡
                 notes = [
                     293.66, 293.66, 587.33, 440.00, 0, 415.30, 0, 392.00,
                     349.23, 0, 293.66, 349.23, 392.00, 311.13, 311.13, 0
@@ -488,9 +570,10 @@
 
             let index = 0;
             bgmIntervalId = setInterval(() => {
+                // 게임 일시 정지(PAUSE) 상태에서는 악보 재생 스킵 및 보존
                 if (gameState !== 'PLAY') return;
                 let freq = notes[index];
-                if (freq > 0) {
+                if (freq > 0 && soundVolumeScale > 0) {
                     try {
                         let osc = audioCtx.createOscillator();
                         let gain = audioCtx.createGain();
@@ -498,7 +581,7 @@
                         gain.connect(audioCtx.destination);
                         osc.type = (theme === 'hidden') ? 'sawtooth' : 'triangle';
                         osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-                        gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+                        gain.gain.setValueAtTime(0.06 * soundVolumeScale, audioCtx.currentTime);
                         gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + (speed / 1000) * 0.9);
                         osc.start();
                         osc.stop(audioCtx.currentTime + (speed / 1000) * 0.95);
@@ -528,6 +611,9 @@
         let lives = 3;
         let gameTime = 300;
         let timerInterval = null;
+        
+        // ⏸️ 일시 정지 전용 이전 상태 보존 홀더
+        let prePausedState = 'PLAY';
 
         // 히든 스테이지 한 층 한 층 깨부수며 올라가는 배틀 정보
         let hiddenCupFloor = 1; // 1층부터 시작
@@ -693,6 +779,7 @@
                 gameState = 'GAMEOVER';
                 stopBGM();
                 document.getElementById('gameover-overlay').classList.remove('hidden');
+                document.getElementById('pause-trigger-btn').classList.add('hidden');
                 clearInterval(timerInterval);
             }
 
@@ -1670,6 +1757,7 @@
             gameState = 'ENDING';
             stopBGM();
             clearInterval(timerInterval);
+            document.getElementById('pause-trigger-btn').classList.add('hidden');
             const overlay = document.getElementById('ending-overlay');
             const title = document.getElementById('ending-title');
             const msg = document.getElementById('ending-msg');
@@ -1696,6 +1784,7 @@
             gameState = 'CLEAR';
             stopBGM();
             clearInterval(timerInterval);
+            document.getElementById('pause-trigger-btn').classList.add('hidden');
             
             const clearTitle = document.getElementById('clear-title');
             const clearMsg = document.getElementById('clear-msg');
@@ -1718,6 +1807,7 @@
         // 🎪 상점 시스템 연계
         function openShop() {
             gameState = 'SHOP';
+            document.getElementById('pause-trigger-btn').classList.add('hidden');
             document.getElementById('shop-overlay').classList.remove('hidden');
             document.getElementById('shop-welcome').innerText = `용사님 어서오세요. 1-${currentStage + 1} 시련에 가기 전 능력치를 극대화하세요. (보유 코인: ${coins} 🪙)`;
             
@@ -1766,11 +1856,43 @@
             currentStage++;
             
             gameState = 'PLAY';
+            document.getElementById('pause-trigger-btn').classList.remove('hidden');
             gameTime = Math.max(100, 310 - (currentStage * 15));
             updateHUD();
             initLevel();
             startTimer();
             window.focus(); // 상점 종료 후 즉시 게임에 포커스 고정
+        }
+
+        // ==========================================
+        // ⏸️ 일시 정지 (PAUSE) 제어 비즈니스 로직
+        // ==========================================
+        function pauseGame() {
+            if (gameState === 'PLAY') {
+                prePausedState = 'PLAY';
+                gameState = 'PAUSE';
+                clearInterval(timerInterval); // 시련 타이머 중단
+                document.getElementById('pause-overlay').classList.remove('hidden');
+                document.getElementById('pause-trigger-btn').classList.add('hidden');
+            }
+        }
+
+        function resumeGame() {
+            if (gameState === 'PAUSE') {
+                gameState = prePausedState;
+                document.getElementById('pause-overlay').classList.add('hidden');
+                document.getElementById('pause-trigger-btn').classList.remove('hidden');
+                startTimer(); // 타이머 복구 가동
+                window.focus();
+            }
+        }
+
+        function togglePauseByButton() {
+            if (gameState === 'PLAY') {
+                pauseGame();
+            } else if (gameState === 'PAUSE') {
+                resumeGame();
+            }
         }
 
         // 시스템 전반 리셋
@@ -1782,6 +1904,7 @@
             }
             gameState = 'PLAY';
             document.getElementById('start-overlay').classList.add('hidden');
+            document.getElementById('pause-trigger-btn').classList.remove('hidden');
             fullResetParameters();
             initLevel();
             startTimer();
@@ -1792,7 +1915,10 @@
             initAudio();
             document.getElementById('gameover-overlay').classList.add('hidden');
             document.getElementById('ending-overlay').classList.add('hidden');
+            document.getElementById('pause-overlay').classList.add('hidden');
+            
             gameState = 'PLAY';
+            document.getElementById('pause-trigger-btn').classList.remove('hidden');
             fullResetParameters();
             initLevel();
             startTimer();
@@ -1845,7 +1971,7 @@
             }
         }
 
-        // 투사체 발사 이벤트 처리 함수 정의 (에러 해결 핵심 수술)
+        // 투사체 발사 이벤트 처리 함수 정의
         function shootFireball() {
             if (player.powerState === 2) {
                 // 용사의 정면 위치에서 이글거리는 불꽃 구체를 스폰합니다.
@@ -1856,6 +1982,7 @@
         }
 
         function update() {
+            // 일시 정지 상태일 때는 물리 연산 및 프레임 업데이트 스킵
             if (gameState !== 'PLAY') return;
 
             player.update();
@@ -1898,6 +2025,7 @@
         }
 
         function draw() {
+            // 게임 배경색 설정
             if (currentStage <= 3) {
                 ctx.fillStyle = '#5c94fc';
             } else if (currentStage >= 4 && currentStage <= 6) {
@@ -2028,8 +2156,18 @@
             keys[e.code] = true;
             keys[e.key] = true; 
 
+            // 플레이 도중 화살표 키나 스페이스바를 누를 때 브라우저 창이 아래로 스크롤되는 것을 강제로 방지
             if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key) && gameState === 'PLAY') {
                 e.preventDefault();
+            }
+
+            // P 키 입력 감지 시 일시정지 분기점 작동
+            if (e.code === 'KeyP' || e.key === 'p' || e.key === 'P') {
+                if (gameState === 'PLAY') {
+                    pauseGame();
+                } else if (gameState === 'PAUSE') {
+                    resumeGame();
+                }
             }
 
             if ((e.code === 'KeyZ' || e.key === 'z' || e.key === 'Z' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.key === 'Shift') && gameState === 'PLAY') {
